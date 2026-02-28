@@ -4,8 +4,9 @@ const fs         = require('fs');
 const path       = require('path');
 
 const {
-    BOT_TOKEN, GROUP_ID, ADMIN_PASSWORD, CHANNEL_LINK, PORT, FILE_CHANNEL_LINK,
-    extractCountry, getCountryEmoji, isAdmin, maskPhone, PANEL_LINK, OTP_CHANNEL_LINK
+    BOT_TOKEN, GROUP_ID, ADMIN_PASSWORD, CHANNEL_LINK, DEV_LINK, PORT,
+    OTP_HISTORY_FILE, escapeHtml, OTP_CHANNEL_LINK, FILE_CHANNEL_LINK,
+    extractCountry, getCountryEmoji, isAdmin, maskPhone, PANEL_LINK,
 } = require('./config');
 
 const {
@@ -14,7 +15,7 @@ const {
 
 const {
     fetchAllSms, fetchSmsRanges, fetchNumbersForRange, fetchSmsForNumber,
-    getMyNumbers, getCountryRanges, getNumbersByRange, detectNewRanges,
+    getMyNumbers, getCountryRanges, getNumbersByRange, detectNewRanges, 
 } = require('./fetcher');
 
 // ============================================================
@@ -26,8 +27,8 @@ let bot = null;
  * userSessions structure:
  * {
  *   [userId]: {
- *     country: 'IVORY COAST 4769',
- *     number:  '2250700000000',
+ *     country:     'IVORY COAST 4769',
+ *     number:      '2250700000000',
  *     usedNumbers: [{ number: '...', time: 1234567890 }]
  *   }
  * }
@@ -44,10 +45,8 @@ const botStats = {
 };
 
 // ============================================================
-// OTP HISTORY  (prevents sending the same OTP twice)
+// OTP HISTORY — prevents sending the same OTP twice
 // ============================================================
-const OTP_HISTORY_FILE = require('./config').OTP_HISTORY_FILE;
-
 function loadOtpHistory() {
     try {
         if (fs.existsSync(OTP_HISTORY_FILE))
@@ -69,17 +68,9 @@ function markOtpSent(msgId, otp, fullMessage) {
 // ============================================================
 // MESSAGE FORMATTERS
 // ============================================================
-function escapeHtml(text) {
-    return String(text)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
 function formatOtpMessage(data) {
     return (
-        `✅ <b>New ${data.service} OTP Received</b>\n\n` +
+        `${data.country} <b>New ${data.country.replace(/^[^\s]+\s/, '')} ${data.service} OTP Received</b>\n\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `⏰ <b>Time:</b> ${new Date(data.timestamp).toLocaleString()}\n` +
         `🌍 <b>Country:</b> ${data.country}\n` +
@@ -87,7 +78,7 @@ function formatOtpMessage(data) {
         `📱 <b>Number:</b> ${maskPhone(data.phone)}\n` +
         `🔑 <b>OTP:</b> <code>${data.otp}</code>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `💬 <b>Message:</b>\n` +
+        `📩 <b>Full Message:</b>\n` +
         `<blockquote>${escapeHtml(data.message)}</blockquote>`
     );
 }
@@ -98,14 +89,14 @@ function formatOtpMessage(data) {
 function mainMenuKeyboard() {
     return {
         inline_keyboard: [
-            [{ text: '📱 Get Number',            callback_data: 'get_number'  }],
+            [{ text: '📱 Get Number',         callback_data: 'get_number'  }],
             [
                 { text: '📊 Status', callback_data: 'status' },
                 { text: '📈 Stats',  callback_data: 'stats'  },
             ],
-            [{ text: '🔍 Check OTPs Now',         callback_data: 'check'       }],
-            [{ text: '🧪 Send Test OTP',           callback_data: 'test'        }],
-            [{ text: '🔬 Debug: Fetch Raw SMS',    callback_data: 'test_fetch'  }],
+            [{ text: '🔍 Check OTPs Now',      callback_data: 'check'       }],
+            [{ text: '🧪 Send Test OTP',        callback_data: 'test'        }],
+            [{ text: '🔬 Debug: Fetch Raw SMS', callback_data: 'test_fetch'  }],
         ],
     };
 }
@@ -134,35 +125,37 @@ function otpActionButtons() {
 }
 
 // ============================================================
-// HELPERS — number assignment
+// HELPERS — number pool / session management
 // ============================================================
+
+/** Returns available numbers from pool, avoiding recently used & currently taken */
 function getAvailablePool(rangeNumbers, session) {
-    const oneHourAgo    = Date.now() - 60 * 60 * 1000;
-    const recentlyUsed  = (session.usedNumbers || [])
+    const oneHourAgo     = Date.now() - 60 * 60 * 1000;
+    const recentlyUsed   = (session.usedNumbers || [])
         .filter(u => u.time > oneHourAgo)
         .map(u => u.number);
     const currentlyTaken = Object.values(userSessions)
         .map(s => s.number)
         .filter(Boolean);
 
-    // Prefer numbers not used in last hour and not taken right now
     const preferred = rangeNumbers.filter(
         n => !recentlyUsed.includes(n) && !currentlyTaken.includes(n)
     );
-    // Fallback: any number not currently taken
     const fallback = rangeNumbers.filter(n => !currentlyTaken.includes(n));
 
     return preferred.length > 0 ? preferred : fallback;
 }
 
+/** Pick a random item from an array */
 function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/** Save updated session for a user */
 function updateSession(userId, rangeName, assignedNumber) {
-    const session     = userSessions[userId] || {};
-    const oneHourAgo  = Date.now() - 60 * 60 * 1000;
-    const prevUsed    = (session.usedNumbers || []).filter(u => u.time > oneHourAgo);
+    const session    = userSessions[userId] || {};
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const prevUsed   = (session.usedNumbers || []).filter(u => u.time > oneHourAgo);
 
     userSessions[userId] = {
         country:     rangeName,
@@ -171,6 +164,7 @@ function updateSession(userId, rangeName, assignedNumber) {
     };
 }
 
+/** Find which userId currently has a given phone number assigned */
 function findUserWithNumber(phone) {
     for (const [userId, session] of Object.entries(userSessions)) {
         if (session.number === phone) return userId;
@@ -179,7 +173,7 @@ function findUserWithNumber(phone) {
 }
 
 // ============================================================
-// SEND OTP TO GROUP (and DM the assigned user if any)
+// SEND OTP — to group + DM assigned user if any
 // ============================================================
 async function sendOtpToGroup(data) {
     try {
@@ -187,20 +181,20 @@ async function sendOtpToGroup(data) {
 
         const msg = formatOtpMessage(data);
 
-        // Send to group
+        // Always send to group
         await bot.sendMessage(GROUP_ID, msg, {
             parse_mode:   'HTML',
             reply_markup: otpActionButtons(),
         });
 
-        // DM the user who has this number assigned
+        // DM the user who requested this number
         const assignedUser = findUserWithNumber(data.phone);
         if (assignedUser) {
             try {
                 await bot.sendMessage(assignedUser, msg, { parse_mode: 'HTML' });
                 await bot.sendMessage(
                     assignedUser,
-                    `🔑 Your OTP: <code>${data.otp}</code>\n✅ Number session cleared — request a new number anytime.`,
+                    `🔑 Your OTP: <code>${data.otp}</code>\n✅ Session cleared — request a new number anytime.`,
                     { parse_mode: 'HTML' }
                 );
                 delete userSessions[assignedUser];
@@ -252,7 +246,7 @@ function setupBotHandlers() {
         );
     });
 
-    // Callback queries
+    // All button presses
     bot.on('callback_query', async (query) => {
         const chatId    = query.message.chat.id;
         const userId    = query.from.id;
@@ -261,22 +255,22 @@ function setupBotHandlers() {
 
         await bot.answerCallbackQuery(query.id).catch(() => {});
 
-        // Helper to edit the current message
+        // Shorthand: edit the current message
         const edit = (text, keyboard) => bot.editMessageText(text, {
             chat_id:      chatId,
             message_id:   messageId,
             parse_mode:   'HTML',
-            reply_markup: keyboard || mainMenuKeyboard(),
+            reply_markup: keyboard !== undefined ? keyboard : mainMenuKeyboard(),
         });
 
-        // ── MAIN MENU ──────────────────────────────────────
+        // ── MAIN MENU ──────────────────────────────────────────
         if (data === 'menu') {
             await edit('🏠 <b>Main Menu</b>\n\nChoose an option:');
 
-        // ── GET NUMBER / CHANGE COUNTRY ────────────────────
+        // ── GET NUMBER / CHANGE COUNTRY ────────────────────────
         } else if (data === 'get_number' || data === 'change_country') {
 
-            // ADMIN → send txt files per range
+            // ADMIN → send one txt file per range
             if (isAdmin(userId)) {
                 await edit('👑 <b>Admin: Fetching all numbers by range...</b>');
                 try {
@@ -291,15 +285,14 @@ function setupBotHandlers() {
                     await edit(`✅ Sending ${rangeNames.length} file(s)...`);
 
                     for (const rangeName of rangeNames) {
-                        const nums     = grouped[rangeName];
-                        const content  = `Range: ${rangeName}\nTotal: ${nums.length}\n\n${nums.join('\n')}`;
-                        const fileName = `${rangeName.replace(/\s+/g, '_')}.txt`;
-                        const tmpPath  = path.join(__dirname, fileName);
+                        const nums    = grouped[rangeName];
+                        const content = `Range: ${rangeName}\nTotal: ${nums.length}\n\n${nums.join('\n')}`;
+                        const tmpPath = path.join(__dirname, `${rangeName.replace(/\s+/g, '_')}.txt`);
                         fs.writeFileSync(tmpPath, content);
 
                         await bot.sendDocument(chatId, tmpPath, {
-                            caption:      `${getCountryEmoji(extractCountry(rangeName))} <b>${rangeName}</b> — ${nums.length} numbers`,
-                            parse_mode:   'HTML',
+                            caption:    `${getCountryEmoji(extractCountry(rangeName))} <b>${rangeName}</b> — ${nums.length} numbers`,
+                            parse_mode: 'HTML',
                         });
 
                         fs.unlinkSync(tmpPath);
@@ -317,7 +310,7 @@ function setupBotHandlers() {
                 return;
             }
 
-            // NORMAL USER → show country selector
+            // NORMAL USER → country selector
             await edit('🌍 <b>Loading available countries...</b>');
 
             const ranges    = await getCountryRanges();
@@ -343,20 +336,20 @@ function setupBotHandlers() {
 
             await edit('🌍 <b>Select Country:</b>', { inline_keyboard: keyboard });
 
-        // ── REFRESH NUMBERS ────────────────────────────────
+        // ── REFRESH NUMBERS ────────────────────────────────────
         } else if (data === 'refresh_numbers') {
             await edit('🔄 <b>Refreshing numbers cache...</b>');
             const ranges = await getCountryRanges(true);
             const count  = Object.keys(ranges).length;
             await edit(`✅ <b>Refreshed! Found ${count} country ranges.</b>`);
 
-        // ── COUNTRY SELECTED ───────────────────────────────
+        // ── COUNTRY SELECTED ───────────────────────────────────
         } else if (data.startsWith('country_')) {
             const rangeName    = data.replace('country_', '');
             const numbers      = await getMyNumbers();
             const rangeNumbers = numbers
-                .filter(row => row.length >= 2 && row[1].replace(/[^\x20-\x7E]/g, '') === rangeName)
-                .map(row => row[0]);
+                .filter(r => r.length >= 2 && r[1].replace(/[^\x20-\x7E]/g, '') === rangeName)
+                .map(r => r[0]);
 
             if (rangeNumbers.length === 0) {
                 await edit('⚠️ <b>No numbers available for this range.</b>');
@@ -386,7 +379,7 @@ function setupBotHandlers() {
                 numberAssignedKeyboard()
             );
 
-        // ── CHANGE NUMBER (same country) ───────────────────
+        // ── CHANGE NUMBER (same country) ───────────────────────
         } else if (data === 'change_number') {
             const session    = userSessions[userId] || {};
             const rangeName  = session.country;
@@ -399,13 +392,11 @@ function setupBotHandlers() {
 
             const numbers      = await getMyNumbers();
             const rangeNumbers = numbers
-                .filter(row => row.length >= 2 && row[1].replace(/[^\x20-\x7E]/g, '') === rangeName)
-                .map(row => row[0]);
+                .filter(r => r.length >= 2 && r[1].replace(/[^\x20-\x7E]/g, '') === rangeName)
+                .map(r => r[0])
+                .filter(n => n !== currentNum); // exclude current number
 
-            const pool = getAvailablePool(
-                rangeNumbers.filter(n => n !== currentNum),
-                session
-            );
+            const pool = getAvailablePool(rangeNumbers, session);
 
             if (pool.length === 0) {
                 await edit('⚠️ <b>No other numbers available right now.</b>', numberAssignedKeyboard());
@@ -426,7 +417,7 @@ function setupBotHandlers() {
                 numberAssignedKeyboard()
             );
 
-        // ── CHECK OTPs NOW ─────────────────────────────────
+        // ── CHECK OTPs NOW ─────────────────────────────────────
         } else if (data === 'check') {
             await edit('🔍 <b>Checking for new OTPs...</b>');
             const messages = await fetchAllSms();
@@ -440,7 +431,7 @@ function setupBotHandlers() {
                     : '📭 <b>No new OTPs found.</b>\n\nChecking automatically every 10 seconds.'
             );
 
-        // ── STATUS ─────────────────────────────────────────
+        // ── STATUS ─────────────────────────────────────────────
         } else if (data === 'status') {
             const uptime = Math.floor((Date.now() - botStats.startTime.getTime()) / 1000);
             await edit(
@@ -454,7 +445,7 @@ function setupBotHandlers() {
                 `❌ <b>Last Error:</b> ${botStats.lastError || 'None'}`
             );
 
-        // ── STATS ──────────────────────────────────────────
+        // ── STATS ──────────────────────────────────────────────
         } else if (data === 'stats') {
             const uptime = Math.floor((Date.now() - botStats.startTime.getTime()) / 1000);
             await edit(
@@ -468,7 +459,7 @@ function setupBotHandlers() {
                 `🟢 <b>Monitor Running:</b> ${botStats.isRunning ? 'Yes' : 'No'}`
             );
 
-        // ── TEST OTP ───────────────────────────────────────
+        // ── TEST OTP ───────────────────────────────────────────
         } else if (data === 'test') {
             await sendOtpToGroup({
                 id:        'test_' + Date.now(),
@@ -481,7 +472,7 @@ function setupBotHandlers() {
             });
             await edit('✅ <b>Test OTP sent to the group!</b>');
 
-        // ── DEBUG: FETCH RAW SMS ───────────────────────────
+        // ── DEBUG: FETCH RAW SMS ───────────────────────────────
         } else if (data === 'test_fetch') {
             await edit('🔍 <b>Fetching raw SMS from portal...</b>');
 
@@ -493,7 +484,6 @@ function setupBotHandlers() {
                     return;
                 }
 
-                // Pick random range
                 const randomRange = pickRandom(ranges);
                 await bot.sendMessage(chatId,
                     `📡 Range picked: <b>${randomRange}</b>\nFetching numbers...`,
@@ -511,11 +501,10 @@ function setupBotHandlers() {
                 }
 
                 await bot.sendMessage(chatId,
-                    `📱 <b>${numbers.length} number(s) found:</b>\n<code>${numbers.join('\n')}</code>`,
+                    `📱 <b>${numbers.length} number(s):</b>\n<code>${numbers.join('\n')}</code>`,
                     { parse_mode: 'HTML' }
                 );
 
-                // Pick random number and fetch SMS
                 const randomNumber = pickRandom(numbers);
                 await bot.sendMessage(chatId,
                     `🔍 Fetching SMS for: <code>${randomNumber}</code>`,
@@ -526,7 +515,7 @@ function setupBotHandlers() {
 
                 if (smsList.length === 0) {
                     await bot.sendMessage(chatId,
-                        `📭 No SMS found for <code>${randomNumber}</code>\n\nCheck console for raw HTML output.`,
+                        `📭 No SMS found for <code>${randomNumber}</code>\n\nCheck console for raw HTML.`,
                         { parse_mode: 'HTML', reply_markup: mainMenuKeyboard() }
                     );
                     return;
@@ -534,7 +523,7 @@ function setupBotHandlers() {
 
                 for (const sms of smsList) {
                     await bot.sendMessage(chatId,
-                        `📨 <b>Raw SMS:</b>\n<blockquote>${sms}</blockquote>`,
+                        `📨 <b>Raw SMS:</b>\n<blockquote>${escapeHtml(sms)}</blockquote>`,
                         { parse_mode: 'HTML' }
                     );
                 }
@@ -567,7 +556,7 @@ async function backgroundMonitor() {
             const messages = await fetchAllSms();
             botStats.lastCheck = new Date().toLocaleString();
 
-            // Alert on new ranges
+            // Alert on newly seen ranges
             const rangesThisCycle = [...new Set(messages.map(m => m.range).filter(Boolean))];
             if (rangesThisCycle.length > 0) {
                 const newRanges = await detectNewRanges(rangesThisCycle);
@@ -594,7 +583,7 @@ async function backgroundMonitor() {
             botStats.consecutiveFailures++;
 
             if (botStats.consecutiveFailures >= 5) {
-                console.warn('⚠️ 5 consecutive failures — reinitializing browser...');
+                console.warn('⚠️ 5 failures in a row — reinitializing browser...');
                 await initBrowser();
                 botStats.consecutiveFailures = 0;
             } else {
@@ -605,14 +594,13 @@ async function backgroundMonitor() {
 }
 
 // ============================================================
-// EXPRESS SERVER (admin panel + API endpoints)
+// EXPRESS SERVER
 // ============================================================
 function setupExpress() {
     const app = express();
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
 
-    // Health check
     app.get('/', (req, res) => {
         const uptime = Math.floor((Date.now() - botStats.startTime.getTime()) / 1000);
         res.json({
@@ -625,7 +613,6 @@ function setupExpress() {
         });
     });
 
-    // Detailed status
     app.get('/status', (req, res) => {
         const uptime = Math.floor((Date.now() - botStats.startTime.getTime()) / 1000);
         res.json({
@@ -639,7 +626,6 @@ function setupExpress() {
         });
     });
 
-    // Update cookies from admin panel
     app.post('/update-cookies', (req, res) => {
         const { password, cookies } = req.body;
         if (password !== ADMIN_PASSWORD)
@@ -653,7 +639,6 @@ function setupExpress() {
         );
     });
 
-    // Trigger OTP check manually
     app.get('/check', async (req, res) => {
         try {
             const messages = await fetchAllSms();
@@ -667,7 +652,6 @@ function setupExpress() {
         }
     });
 
-    // Force re-login
     app.get('/relogin', async (req, res) => {
         try {
             const result = await initBrowser();
@@ -677,7 +661,6 @@ function setupExpress() {
         }
     });
 
-    // Refresh numbers cache
     app.get('/refresh-numbers', async (req, res) => {
         try {
             const numbers = await getMyNumbers(true);
@@ -687,7 +670,6 @@ function setupExpress() {
         }
     });
 
-    // Admin panel HTML
     app.get('/admin', (req, res) => {
         res.send(`<!DOCTYPE html>
 <html>
@@ -712,7 +694,7 @@ function setupExpress() {
             background:#f8f9fa; padding:15px; border-radius:8px;
             margin-bottom:20px; line-height:1.9; font-size:14px;
         }
-        label { font-size:13px; color:#666; font-weight:600; }
+        label { font-size:13px; color:#666; font-weight:600; display:block; margin-top:10px; }
         input, textarea {
             width:100%; padding:12px; margin:6px 0 16px;
             border:2px solid #e0e0e0; border-radius:8px; font-size:14px;
@@ -726,14 +708,8 @@ function setupExpress() {
             margin-top:4px; transition:opacity .2s;
         }
         button:hover { opacity:.9; }
-        .btn-danger {
-            background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
-            margin-top:10px;
-        }
-        .alert {
-            padding:14px; margin-top:16px; border-radius:8px; display:none;
-            font-size:14px;
-        }
+        .btn-danger { background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%); margin-top:10px; }
+        .alert { padding:14px; margin-top:16px; border-radius:8px; display:none; font-size:14px; }
         .success { background:#d4edda; color:#155724; border:1px solid #c3e6cb; }
         .error   { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
     </style>
@@ -741,57 +717,50 @@ function setupExpress() {
 <body>
 <div class="container">
     <h1>🤖 NEXUSBOT Admin Panel</h1>
-
     <div class="status" id="status">⏳ Loading status...</div>
-
     <label>Admin Password</label>
     <input type="password" id="password" placeholder="Enter admin password">
-
     <label>Cookies (JSON array)</label>
-    <textarea id="cookies" rows="10" placeholder='Paste cookies JSON array here...'></textarea>
-
+    <textarea id="cookies" rows="10" placeholder="Paste cookies JSON array here..."></textarea>
     <button onclick="updateCookies()">🔄 Update Cookies</button>
     <button class="btn-danger" onclick="relogin()">🔁 Force Re-Login</button>
-
     <div class="alert" id="alert"></div>
 </div>
 <script>
     async function loadStatus() {
         try {
-            const res = await fetch('/status');
-            const d   = await res.json();
+            const d = await fetch('/status').then(r => r.json());
             document.getElementById('status').innerHTML =
-                '🔐 Session: '   + (d.sessionValid ? '✅ Valid'  : '❌ Invalid') +
-                '<br>📨 OTPs Sent: ' + d.totalOtpsSent +
+                '🔐 Session: '        + (d.sessionValid ? '✅ Valid' : '❌ Invalid') +
+                '<br>📨 OTPs Sent: '  + d.totalOtpsSent +
                 '<br>🕐 Last Check: ' + d.lastCheck +
                 '<br>👥 Active Sessions: ' + d.activeSessions +
-                '<br>🟢 Monitor: ' + (d.isRunning ? 'Running' : 'Stopped') +
+                '<br>🟢 Monitor: '    + (d.isRunning ? 'Running' : 'Stopped') +
                 (d.lastError ? '<br>❌ Last Error: ' + d.lastError : '');
         } catch (e) {
             document.getElementById('status').textContent = '⚠️ Could not load status';
         }
     }
 
-    async function showAlert(msg, success) {
+    function showAlert(msg, ok) {
         const el = document.getElementById('alert');
-        el.className = 'alert ' + (success ? 'success' : 'error');
+        el.className = 'alert ' + (ok ? 'success' : 'error');
         el.textContent = msg;
         el.style.display = 'block';
     }
 
     async function updateCookies() {
         try {
-            const cookies = JSON.parse(document.getElementById('cookies').value);
             const res = await fetch('/update-cookies', {
-                method:  'POST',
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({
+                body: JSON.stringify({
                     password: document.getElementById('password').value,
-                    cookies,
+                    cookies:  JSON.parse(document.getElementById('cookies').value),
                 }),
             });
-            const data = await res.json();
-            showAlert(res.ok ? '✅ ' + data.message : '❌ ' + data.error, res.ok);
+            const d = await res.json();
+            showAlert(res.ok ? '✅ ' + d.message : '❌ ' + d.error, res.ok);
             if (res.ok) setTimeout(loadStatus, 3000);
         } catch (err) {
             showAlert('❌ ' + err.message, false);
@@ -800,9 +769,8 @@ function setupExpress() {
 
     async function relogin() {
         showAlert('🔁 Re-login started — browser will open...', true);
-        const res  = await fetch('/relogin');
-        const data = await res.json();
-        showAlert(data.success ? '✅ Re-login successful!' : '❌ Re-login failed', data.success);
+        const d = await fetch('/relogin').then(r => r.json());
+        showAlert(d.success ? '✅ Re-login successful!' : '❌ Re-login failed', d.success);
         setTimeout(loadStatus, 2000);
     }
 
