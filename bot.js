@@ -4,8 +4,8 @@ const fs         = require('fs');
 const path       = require('path');
 
 const {
-    BOT_TOKEN, GROUP_ID, ADMIN_PASSWORD, CHANNEL_LINK, PORT,
-    extractCountry, getCountryEmoji, isAdmin, maskPhone,
+    BOT_TOKEN, GROUP_ID, ADMIN_PASSWORD, CHANNEL_LINK, PORT, FILE_CHANNEL_LINK,
+    extractCountry, getCountryEmoji, isAdmin, maskPhone, PANEL_LINK, OTP_CHANNEL_LINK
 } = require('./config');
 
 const {
@@ -115,8 +115,10 @@ function numberAssignedKeyboard() {
 function otpActionButtons() {
     return {
         inline_keyboard: [[
-            { text: '🚀 Panel',   url: `https://t.me/${BOT_TOKEN.split(':')[0]}` },
+            { text: '🚀 Panel',   url: PANEL_LINK },
             { text: '📢 Channel', url: CHANNEL_LINK },
+            { text: '📁 File Channel',   url: FILE_CHANNEL_LINK },
+            { text: '🔑 OTP Channel',    url: OTP_CHANNEL_LINK },
         ]],
     };
 }
