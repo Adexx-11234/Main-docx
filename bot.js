@@ -69,6 +69,14 @@ function markOtpSent(msgId, otp, fullMessage) {
 // ============================================================
 // MESSAGE FORMATTERS
 // ============================================================
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 function formatOtpMessage(data) {
     return (
         `✅ <b>New ${data.service} OTP Received</b>\n\n` +
@@ -80,7 +88,7 @@ function formatOtpMessage(data) {
         `🔑 <b>OTP:</b> <code>${data.otp}</code>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `💬 <b>Message:</b>\n` +
-        `<blockquote>${data.message}</blockquote>`
+        `<blockquote>${escapeHtml(data.message)}</blockquote>`
     );
 }
 
@@ -117,9 +125,11 @@ function otpActionButtons() {
         inline_keyboard: [[
             { text: '🚀 Panel',   url: PANEL_LINK },
             { text: '📢 Channel', url: CHANNEL_LINK },
+        ],
+         [
             { text: '📁 File Channel',   url: FILE_CHANNEL_LINK },
             { text: '🔑 OTP Channel',    url: OTP_CHANNEL_LINK },
-        ]],
+         ]],
     };
 }
 
