@@ -1,0 +1,22 @@
+{
+  "name": "nexusbot-ivasms",
+  "version": "2.0.0",
+  "description": "NEXUSBOT - IVASMS OTP Monitor",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
+    "node-telegram-bot-api": "^0.64.0",
+    "puppeteer": "^21.0.0",
+    "puppeteer-real-browser": "^1.4.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}
