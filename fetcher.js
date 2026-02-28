@@ -3,13 +3,11 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-    NUMBERS_CACHE_FILE, KNOWN_RANGES_FILE, NUMBERS_CACHE_TTL, NUMBERS_PAGE_URL,
-    PORTAL_URL, extractOTP, extractService, extractCountry, getCountryEmoji, getDateRange,
+    NUMBERS_CACHE_FILE, KNOWN_RANGES_FILE, NUMBERS_CACHE_TTL, NUMBERS_PAGE_URL, LIVE_SMS_PAGE_URL, SEEN_SMS_FILE,
+    PORTAL_URL, extractOTP, extractService, extractCountry, getCountryEmoji, getDateRange, LIVE_NUMBERS_URL, escapeHtml,
 } = require('./config');
 
 const { getCsrfToken, getPage, isPageReady, ensureOnSmsPage, setCsrfToken, refreshSession } = require('./browser');
-
-const SEEN_SMS_FILE = path.join(__dirname, 'seen_sms.json');
 
 // ─── PAGE LOCK (navigation only) ────────────────────────────
 let pageLock = false;
@@ -67,6 +65,28 @@ function saveSeenSms(set) {
     try {
         fs.writeFileSync(SEEN_SMS_FILE, JSON.stringify([...set].slice(-10000)));
     } catch (e) {}
+}
+
+// True after the first successful full fetch — prevents startup flood
+let seenInitialised = fs.existsSync(SEEN_SMS_FILE);
+
+/**
+ * seedSeenSms — called on first run when seen_sms.json doesn't exist yet.
+ * Marks ALL currently visible SMS as seen WITHOUT sending them.
+ * This means only SMS that arrive AFTER bot startup will be forwarded.
+ */
+async function seedSeenSms(smsResults) {
+    const seen = loadSeenSms();
+    let count = 0;
+    for (const { number, smsList } of smsResults) {
+        for (const smsText of smsList) {
+            const msgId = makeMsgId(number, smsText);
+            if (!seen.has(msgId)) { seen.add(msgId); count++; }
+        }
+    }
+    saveSeenSms(seen);
+    seenInitialised = true;
+    console.log(`🌱 Seeded ${count} existing SMS as seen — only NEW SMS will be forwarded from now on`);
 }
 
 function makeMsgId(number, smsText) {
@@ -225,12 +245,18 @@ async function fetchAllSms() {
             )
         );
 
+        // First run — seed all existing SMS as seen, send nothing
+        if (!seenInitialised) {
+            await seedSeenSms(smsResults);
+            return [];
+        }
+
         // Filter to only new SMS
         const seen = loadSeenSms();
         const newMessages = [];
 
         for (const { number, rangeName, smsList } of smsResults) {
-            const country = extractCountry(rangeName);
+            const country      = extractCountry(rangeName);
             const countryEmoji = getCountryEmoji(country);
 
             for (const smsText of smsList) {
@@ -239,15 +265,15 @@ async function fetchAllSms() {
 
                 const otp = extractOTP(smsText);
                 newMessages.push({
-                    id: msgId,
-                    phone: number,
-                    otp: otp || null,
-                    service: extractService(smsText),
-                    message: smsText,
+                    id:        msgId,
+                    phone:     number,
+                    otp:       otp || null,
+                    service:   extractService(smsText),
+                    message:   smsText,
                     timestamp: new Date().toISOString(),
-                    country: `${countryEmoji} ${country}`,
-                    range: rangeName,
-                    hasOtp: !!otp,
+                    country:   `${countryEmoji} ${country}`,
+                    range:     rangeName,
+                    hasOtp:    !!otp,
                 });
 
                 seen.add(msgId);
@@ -267,7 +293,9 @@ async function fetchAllSms() {
     }
 }
 
-// ─── MY NUMBERS (cached, paginated) ─────────────────────────
+// ─── MY NUMBERS via Live SMS API (fast, no pagination) ──────
+// Uses /portal/live/my_sms to get termination_id per range,
+// then /portal/live/getNumbers to get all numbers as clean JSON
 async function getMyNumbers(forceRefresh = false) {
     if (!forceRefresh) {
         try {
@@ -283,47 +311,75 @@ async function getMyNumbers(forceRefresh = false) {
         const page = getPage();
         if (!page) return [];
 
-        console.log('📥 Fetching numbers...');
-        const allNumbers = [];
+        console.log('📥 Fetching numbers via Live SMS API...');
 
-        await page.goto(NUMBERS_PAGE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 2000));
+        // ── Step 1: Fetch Live SMS page HTML in background (no navigation) ──
+        // We fetch the page as HTML using the browser context so CF cookies are included,
+        // then parse the accordion to extract termination_id per range name
+        const liveHtml = await page.evaluate(async (url) => {
+            const res = await fetch(url, { credentials: 'include' });
+            return res.ok ? res.text() : null;
+        }, LIVE_SMS_PAGE_URL);
 
-        try { await page.select('select[name*="length"]', '100'); await new Promise(r => setTimeout(r, 1500)); } catch (e) {}
-
-        const scrape = async () => {
-            const $ = cheerio.load(await page.content());
-            $('table tbody tr').each((_, row) => {
-                const cells = $(row).find('td').map((_, td) => $(td).text().trim()).get();
-                if (cells.length >= 3 && /^\d{7,15}$/.test(cells[1]) && cells[2]?.trim()
-                    && !allNumbers.some(n => n[0] === cells[1])) {
-                    allNumbers.push([cells[1].trim(), cells[2].trim()]);
-                }
-            });
-        };
-
-        await scrape();
-        for (let p = 1; p < 20; p++) {
-            if (await page.$('#MyNumber_next.disabled')) break;
-            const next = await page.$('#MyNumber_next');
-            if (!next) break;
-            await next.click();
-            await new Promise(r => setTimeout(r, 1500));
-            await scrape();
+        if (!liveHtml) {
+            console.log('⚠️ Could not fetch Live SMS page');
+            return [];
         }
 
-        console.log(`✅ ${allNumbers.length} numbers fetched`);
+        // Parse accordion: <a data-id="553671">IVORY COAST 6518</a>
+        const $ = cheerio.load(liveHtml);
+        const ranges = [];
+        $('#accordion a[data-id]').each((_, el) => {
+            const id   = $(el).attr('data-id');
+            const name = $(el).text().trim();
+            if (id && name) ranges.push({ id, name });
+        });
 
+        if (ranges.length === 0) {
+            console.log('⚠️ No ranges found on Live SMS page');
+            return [];
+        }
+
+        console.log(`📋 Found ${ranges.length} range(s): ${ranges.map(r => r.name).join(', ')}`);
+
+        // ── Step 2: Fetch numbers for each range in parallel ──
+        const seenNums = new Map();
+
+        await Promise.all(ranges.map(async ({ id, name }) => {
+            try {
+                const text = await pagePost(LIVE_NUMBERS_URL, { termination_id: id });
+                const json = JSON.parse(text);
+                const nums = json
+                    .map(item => String(item.Number))
+                    .filter(n => /^\d{7,15}$/.test(n));
+
+                nums.forEach(num => {
+                    if (!seenNums.has(num)) {
+                        seenNums.set(num, [num, name]);
+                    }
+                });
+
+                console.log(`  📱 ${name}: ${nums.length} number(s)`);
+            } catch (err) {
+                console.error(`  ❌ Failed to fetch numbers for ${name}:`, err.message);
+            }
+        }));
+
+        console.log(`✅ ${seenNums.size} total numbers fetched`);
+
+        // Navigate back to SMS page
         await page.goto(PORTAL_URL, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
         await refreshSession().catch(() => {});
 
-        if (allNumbers.length > 0) {
+        const allNumbers = [...seenNums.values()]; // [ [num, rangeName], ... ]
+        if (allNumbers.size > 0) {
             fs.writeFileSync(NUMBERS_CACHE_FILE, JSON.stringify({ timestamp: Date.now(), numbers: allNumbers }));
         }
 
-        return allNumbers;
+        return allNumbers
     });
 }
+
 
 async function getCountryRanges(forceRefresh = false) {
     const numbers = await getMyNumbers(forceRefresh);
@@ -356,5 +412,5 @@ async function detectNewRanges(currentRanges) {
 module.exports = {
     fetchSmsRanges, fetchNumbersForRange, fetchSmsForNumber,
     fetchAllSms, getMyNumbers, getCountryRanges,
-    getNumbersByRange, detectNewRanges,
+    getNumbersByRange, detectNewRanges, escapeHtml,
 };
