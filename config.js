@@ -10,7 +10,9 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const CHANNEL_LINK   = process.env.CHANNEL_LINK   || 'https://t.me/yourchannel';
 const DEV_LINK       = process.env.DEV_LINK       || 'https://t.me/yourdev';
 const PORT           = process.env.PORT            || 5000;
-
+const PANEL_LINK        = process.env.PANEL_LINK        || 'https://t.me';
+const FILE_CHANNEL_LINK = process.env.FILE_CHANNEL_LINK || 'https://t.me';
+const OTP_CHANNEL_LINK  = process.env.OTP_CHANNEL_LINK  || 'https://t.me';
 // ============================================================
 // ADMIN IDS
 // ============================================================
@@ -129,6 +131,11 @@ function extractService(message) {
 /** Extract OTP code from SMS text */
 function extractOTP(text) {
     if (!text) return null;
+    // First try: numbers with hyphens (e.g., 179-997)
+    const hyphenMatch = text.match(/\b(\d{3,4})-(\d{3,4})\b/);
+    if (hyphenMatch) return hyphenMatch[1] + hyphenMatch[2]; // Return without hyphen
+    
+    // Second try: plain numbers
     const match = text.match(/\b(\d{4,8})\b/);
     return match ? match[1] : null;
 }
@@ -179,7 +186,7 @@ function maskPhone(phone) {
 // ============================================================
 module.exports = {
     // Env
-    BOT_TOKEN, GROUP_ID, ADMIN_PASSWORD, CHANNEL_LINK, DEV_LINK, PORT,
+    BOT_TOKEN, GROUP_ID, ADMIN_PASSWORD, CHANNEL_LINK, DEV_LINK, PORT, PANEL_LINK, FILE_CHANNEL_LINK, OTP_CHANNEL_LINK,
     // Admin
     ADMIN_IDS,
     // URLs
