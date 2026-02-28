@@ -27,6 +27,8 @@ const NUMBERS_PAGE_URL = `${BASE_URL}/portal/numbers`;
 const IVAS_EMAIL    = process.env.IVAS_EMAIL    || '';
 const IVAS_PASSWORD = process.env.IVAS_PASSWORD || '';
 const LOGIN_URL     = `${BASE_URL}/login`;
+const LIVE_NUMBERS_URL  = '/portal/live/getNumbers';
+const LIVE_SMS_PAGE_URL = `${BASE_URL}/portal/live/my_sms`;
 
 // ============================================================
 // FILE PATHS
@@ -145,6 +147,15 @@ function isAdmin(userId) {
     return ADMIN_IDS.includes(Number(userId));
 }
 
+// ─── HTML ESCAPE (prevents Telegram 400 on special chars) ────
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 /**
  * Get date range for SMS queries
  * Returns both YYYY-MM-DD (for POST requests) and d-m-y (for input display)
@@ -190,14 +201,14 @@ module.exports = {
     // Admin
     ADMIN_IDS,
     // URLs
-    BASE_URL, PORTAL_URL, NUMBERS_PAGE_URL, IVAS_EMAIL, IVAS_PASSWORD, LOGIN_URL,
+    BASE_URL, PORTAL_URL, NUMBERS_PAGE_URL, IVAS_EMAIL, IVAS_PASSWORD, LOGIN_URL, LIVE_SMS_PAGE_URL, LIVE_NUMBERS_URL, 
     // Files
-    COOKIES_FILE, OTP_HISTORY_FILE, NUMBERS_CACHE_FILE, KNOWN_RANGES_FILE, SEEN_SMS_FILE,
+    COOKIES_FILE, OTP_HISTORY_FILE, NUMBERS_CACHE_FILE, KNOWN_RANGES_FILE, SEEN_SMS_FILE, 
     // Timing
     OTP_CHECK_INTERVAL, NUMBERS_CACHE_TTL,
     // Data
     SERVICE_PATTERNS, COUNTRY_FLAGS,
     // Functions
     extractCountry, getCountryEmoji, extractService,
-    extractOTP, isAdmin, getDateRange, maskPhone,
+    extractOTP, isAdmin, getDateRange, maskPhone, escapeHtml,
 };
