@@ -1,12 +1,5 @@
 const fs = require('fs');
-const { BASE_URL, PORTAL_URL, COOKIES_FILE } = require('./config');
-
-// ============================================================
-// CREDENTIALS (from .env)
-// ============================================================
-const IVAS_EMAIL    = process.env.IVAS_EMAIL    || '';
-const IVAS_PASSWORD = process.env.IVAS_PASSWORD || '';
-const LOGIN_URL     = `${BASE_URL}/login`;
+const { BASE_URL, PORTAL_URL, COOKIES_FILE, LOGIN_URL, IVAS_EMAIL, IVAS_PASSWORD } = require('./config');
 
 // ============================================================
 // STATE
